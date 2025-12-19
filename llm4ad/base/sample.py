@@ -37,6 +37,17 @@ class LLM:
         self.do_auto_trim = do_auto_trim
         self.debug_mode = debug_mode
 
+        # Token usage tracking
+        self.last_prompt_tokens = 0
+        self.last_completion_tokens = 0
+        self.last_total_tokens = 0
+        self.last_api_cost = 0.0
+
+        self.total_prompt_tokens = 0
+        self.total_completion_tokens = 0
+        self.total_tokens = 0
+        self.total_api_cost = 0.0
+
     @abstractmethod
     def draw_sample(self, prompt: str | Any, *args, **kwargs) -> str:
         """Returns a predicted continuation of `prompt`.

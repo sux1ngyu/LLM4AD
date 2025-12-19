@@ -66,6 +66,10 @@ class Function:
     score: Any | None = None
     evaluate_time: float | None = None
     sample_time: float | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    api_cost: float | None = None
 
     def __str__(self) -> str:
         return_type = f' -> {self.return_type}' if self.return_type else ''

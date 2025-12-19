@@ -44,6 +44,24 @@ class HttpsApi(LLM):
         self._kwargs = kwargs
         self._cumulative_error = 0
 
+        # Pricing per 1M tokens (USD) - o3 models
+        self._pricing = {
+            'o3-mini': {'input': 1.10, 'output': 4.40},
+        }
+
+    def _calculate_cost(self, prompt_tokens, completion_tokens):
+        """Calculate API cost based on token usage and model pricing."""
+        if self._model in self._pricing:
+            pricing = self._pricing[self._model]
+            input_cost = (prompt_tokens / 1_000_000) * pricing['input']
+            output_cost = (completion_tokens / 1_000_000) * pricing['output']
+            return input_cost + output_cost
+        else:
+            # Default pricing for o3-mini if model name doesn't match exactly
+            input_cost = (prompt_tokens / 1_000_000) * 1.10
+            output_cost = (completion_tokens / 1_000_000) * 4.40
+            return input_cost + output_cost
+
     def draw_sample(self, prompt: str | Any, *args, **kwargs) -> str:
         if isinstance(prompt, str):
             prompt = [{'role': 'user', 'content': prompt.strip()}]
@@ -67,7 +85,23 @@ class HttpsApi(LLM):
                 res = conn.getresponse()
                 data = res.read().decode('utf-8')
                 data = json.loads(data)
-                # print(data)
+
+                # Extract usage information
+                if 'usage' in data:
+                    usage = data['usage']
+                    self.last_prompt_tokens = usage.get('prompt_tokens', 0)
+                    self.last_completion_tokens = usage.get('completion_tokens', 0)
+                    self.last_total_tokens = usage.get('total_tokens', 0)
+
+                    # Calculate cost for this request
+                    self.last_api_cost = self._calculate_cost(self.last_prompt_tokens, self.last_completion_tokens)
+
+                    # Update cumulative totals
+                    self.total_prompt_tokens += self.last_prompt_tokens
+                    self.total_completion_tokens += self.last_completion_tokens
+                    self.total_tokens += self.last_total_tokens
+                    self.total_api_cost += self.last_api_cost
+
                 response = data['choices'][0]['message']['content']
                 if self.debug_mode:
                     self._cumulative_error = 0

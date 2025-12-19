@@ -191,6 +191,13 @@ class EoH:
         func.evaluate_time = eval_time
         func.algorithm = thought
         func.sample_time = sample_time
+
+        # Add token usage and cost information
+        func.prompt_tokens = self._sampler.llm.last_prompt_tokens
+        func.completion_tokens = self._sampler.llm.last_completion_tokens
+        func.total_tokens = self._sampler.llm.last_total_tokens
+        func.api_cost = self._sampler.llm.last_api_cost
+
         if self._profiler is not None:
             self._profiler.register_function(func, program=str(program))
             if isinstance(self._profiler, EoHProfiler):

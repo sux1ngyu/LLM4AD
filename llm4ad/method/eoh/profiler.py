@@ -84,6 +84,10 @@ class EoHProfiler(ProfilerBase):
             'function': str(function),
             'score': function.score,
             'program': program,
+            'prompt_tokens': function.prompt_tokens,
+            'completion_tokens': function.completion_tokens,
+            'total_tokens': function.total_tokens,
+            'api_cost': function.api_cost,
         }
 
         if record_type == 'history':

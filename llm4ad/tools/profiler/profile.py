@@ -134,6 +134,10 @@ class ProfilerBase:
             'function': str(function),
             'score': function.score,
             'program': program,
+            'prompt_tokens': function.prompt_tokens,
+            'completion_tokens': function.completion_tokens,
+            'total_tokens': function.total_tokens,
+            'api_cost': function.api_cost,
         }
 
         if record_type == 'history':
@@ -191,28 +195,31 @@ class ProfilerBase:
                 print(f'Evaluate time: {str(evaluate_time)}')
                 print(f'Sample orders: {str(self._num_samples)}')
                 print(f'------------------------------------------------------')
+                print(f'Tokens (prompt/completion/total): {function.prompt_tokens}/{function.completion_tokens}/{function.total_tokens}')
+                print(f'API Cost     : ${function.api_cost:.6f}')
+                print(f'------------------------------------------------------')
                 print(f'Current best score: {self._cur_best_program_score}')
                 print(f'======================================================\n')
             else:
                 if score is None:
                     if self._num_objs < 2:
                         print(
-                            f'Sample{self._num_samples}: Score=None    Cur_Best_Score={self._cur_best_program_score: .3f}')
+                            f'Sample{self._num_samples}: Score=None    Cur_Best_Score={self._cur_best_program_score: .3f}  Tokens={function.total_tokens}  Cost=${function.api_cost:.6f}')
                     else:
                         # Format the list of best scores dynamically
                         best_scores_str = ", ".join([f"{s: .3f}" for s in self._cur_best_program_score])
                         print(
-                            f'Sample{self._num_samples}: Score=None    Cur_Best_Score=[{best_scores_str}]')
+                            f'Sample{self._num_samples}: Score=None    Cur_Best_Score=[{best_scores_str}]  Tokens={function.total_tokens}  Cost=${function.api_cost:.6f}')
                 else:
                     if self._num_objs < 2:
                         print(
-                            f'Sample{self._num_samples}: Score={score: .3f}     Cur_Best_Score={self._cur_best_program_score: .3f}')
+                            f'Sample{self._num_samples}: Score={score: .3f}     Cur_Best_Score={self._cur_best_program_score: .3f}  Tokens={function.total_tokens}  Cost=${function.api_cost:.6f}')
                     else:
                         # Format both current scores and best scores dynamically
                         scores_str = ", ".join([f"{s: .3f}" for s in score])
                         best_scores_str = ", ".join([f"{s: .3f}" for s in self._cur_best_program_score])
                         print(
-                            f'Sample{self._num_samples}: Score=[{scores_str}]     Cur_Best_Score=[{best_scores_str}]')
+                            f'Sample{self._num_samples}: Score=[{scores_str}]     Cur_Best_Score=[{best_scores_str}]  Tokens={function.total_tokens}  Cost=${function.api_cost:.6f}')
 
         # update statistics about function
         if score is not None:
