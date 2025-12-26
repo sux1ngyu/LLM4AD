@@ -52,10 +52,10 @@ class BP2DEvaluation(Evaluation):
     """Evaluator for the 2D Bin Packing Problem."""
 
     def __init__(self,
-                 timeout_seconds: int = 120,
+                 timeout_seconds: int = 180,
                  n_bins: int = 100,
-                 n_instance: int = 8,
-                 n_items: int = 100,
+                 n_instance: int = 4,
+                 n_items: int = 50,
                  bin_width: int = 100,
                  bin_height: int = 100,
                  **kwargs):

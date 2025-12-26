@@ -21,19 +21,90 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
+import multiprocessing as mp
+import os
+import json
+import hashlib
 import numpy as np
 from llm4ad.base import Evaluation
-from llm4ad.task.optimization.co_bench.utils import load_subdir_as_text
+from llm4ad.task.optimization.co_bench.utils import load_subdir_as_text, select_indices_by_split
 from llm4ad.task.optimization.co_bench.job_shop_scheduling_co_bench.template import template_program, task_description
 
 __all__ = ['JSSEvaluationCB']
+
+
+def _kill_process_tree(pid: int) -> None:
+    try:
+        import psutil  # type: ignore
+
+        parent = psutil.Process(pid)
+        for child in parent.children(recursive=True):
+            try:
+                child.kill()
+            except Exception:
+                pass
+        try:
+            parent.kill()
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def _run_solve_worker(eva: Any, args: tuple[Any, ...], out_q: "mp.Queue") -> None:
+    try:
+        if not callable(eva):
+            raise ValueError("Evaluator received a non-callable solve().")
+        out_q.put(eva(*args))
+    except Exception as e:
+        out_q.put(f"Exception: {e}")
+
+
+def _solve_with_timeout(eva: Any, args: tuple[Any, ...], timeout_seconds: float) -> Any:
+    out_q: "mp.Queue" = mp.Queue()
+    p = mp.Process(target=_run_solve_worker, args=(eva, args, out_q))
+    p.start()
+    p.join(timeout_seconds + 1)
+    if p.is_alive():
+        try:
+            p.terminate()
+        except Exception:
+            pass
+        _kill_process_tree(p.pid)
+        try:
+            p.join(1)
+        except Exception:
+            pass
+        return f"Timeout ({timeout_seconds}s)"
+    try:
+        return out_q.get_nowait()
+    except Exception:
+        return "No result"
+
+
+def _append_jsonl(path: str, obj: dict[str, Any]) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    line = json.dumps(obj, ensure_ascii=False) + "\n"
+    try:
+        import fcntl  # type: ignore
+
+        with open(path, "a", encoding="utf-8") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            f.write(line)
+            f.flush()
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    except Exception:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line)
 
 
 class JSSEvaluationCB(Evaluation):
 
     def __init__(self,
                  timeout_seconds=50,
+                 instance_timeout_seconds: float = 10,
+                 split: Literal["all", "dev", "test"] = "all",
                  **kwargs):
 
         """
@@ -51,6 +122,9 @@ class JSSEvaluationCB(Evaluation):
             timeout_seconds=timeout_seconds
         )
 
+        self.split: Literal["all", "dev", "test"] = split
+        self.instance_timeout_seconds = float(instance_timeout_seconds)
+
         # Load datasets from Hugging Face
         dataset = load_subdir_as_text("CO-Bench/CO-Bench", "Job shop scheduling")
         self._datasets = {}
@@ -60,26 +134,99 @@ class JSSEvaluationCB(Evaluation):
             self._datasets[filename] = text_content
 
     def evaluate_program(self, program_str: str, callable_func: callable, **kwargs) -> Any | None:
-        return self.evaluate(callable_func)
+        split = kwargs.get("split", None)
+        return self.evaluate(callable_func, program_str=program_str, split=split)
 
-    def evaluate(self, eva: callable) -> float | None:
-        ins_cases = []
-        for case_id, ins in enumerate(self._datasets.values()):
-            ins_cases.append(self.load_data(ins))
+    def evaluate(
+        self,
+        eva: callable,
+        *,
+        program_str: str | None = None,
+        split: Literal["all", "dev", "test"] | None = None,
+    ) -> float | None:
+        split_to_use: Literal["all", "dev", "test"] = (split or self.split)
+        dev_map = self.get_dev()
 
-        fitness_list = []
-        try:
-            for i in ins_cases:
-                for j in i:
-                    result = eva(j['n_jobs'], j['n_machines'], j['times'], j['machines'])
-                    fitness = self.eval_func(j['n_jobs'], j['n_machines'], j['times'], j['machines'], result['start_times'], lower_bound=j['lower_bound'], upper_bound=j['upper_bound'])
-                    fitness_list.append(fitness)
+        case_scores: list[float] = []
+        per_case: dict[str, list[dict[str, Any]]] = {}
 
-            return np.mean(fitness_list)
+        for filename, ins_text in self._datasets.items():
+            cases = self.load_data(ins_text)
 
-        except ValueError as e:
-            print(e)
+            if dev_map is not None and split_to_use == "dev" and filename not in dev_map:
+                continue
+
+            dev_indices = None if dev_map is None else dev_map.get(filename, None)
+            selected_indices = select_indices_by_split(
+                len(cases),
+                split=split_to_use,
+                dev_indices=dev_indices,
+            )
+            if not selected_indices:
+                continue
+
+            scores_full: list[Any] = ["Skipped"] * len(cases)
+            for idx in selected_indices:
+                j = cases[idx]
+                solve_res = _solve_with_timeout(
+                    eva,
+                    (j["n_jobs"], j["n_machines"], j["times"], j["machines"]),
+                    self.instance_timeout_seconds,
+                )
+                if isinstance(solve_res, str):
+                    scores_full[idx] = solve_res
+                    continue
+                try:
+                    scores_full[idx] = self.eval_func(
+                        j["n_jobs"],
+                        j["n_machines"],
+                        j["times"],
+                        j["machines"],
+                        solve_res["start_times"],
+                        lower_bound=j["lower_bound"],
+                        upper_bound=j["upper_bound"],
+                    )
+                except Exception as e:
+                    scores_full[idx] = f"Exception: {e}"
+
+            per_case[filename] = []
+            vals = [float(scores_full[i]) if isinstance(scores_full[i], (int, float)) else 0.0 for i in selected_indices]
+            for i in selected_indices:
+                raw = scores_full[i]
+                if isinstance(raw, str) and raw.startswith("Timeout"):
+                    status = "timeout"
+                elif isinstance(raw, str) and raw.startswith("Exception"):
+                    status = "exception"
+                elif isinstance(raw, (int, float)):
+                    status = "ok"
+                else:
+                    status = "other"
+                per_case[filename].append({"idx": int(i), "status": status, "raw": raw, "normed": raw})
+            if vals:
+                case_scores.append(float(np.mean(vals)))
+
+        if not case_scores:
             return None
+        overall = float(np.mean(case_scores))
+
+        run_log_dir = os.environ.get("LLM4AD_RUN_LOG_DIR", "").strip()
+        if run_log_dir:
+            prog_hash = None
+            if program_str:
+                prog_hash = hashlib.sha1(program_str.encode("utf-8", errors="ignore")).hexdigest()[:12]
+            _append_jsonl(
+                os.path.join(run_log_dir, "instance_scores.jsonl"),
+                {
+                    "task": self.__class__.__name__,
+                    "split": split_to_use,
+                    "instance_timeout_seconds": self.instance_timeout_seconds,
+                    "score": overall,
+                    "program_sha1_12": prog_hash,
+                    "cases": per_case,
+                },
+            )
+
+        return overall
 
     def load_data(self, input_string):
         cases = []

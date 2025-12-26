@@ -1,6 +1,49 @@
+from __future__ import annotations
+
 from pathlib import PurePosixPath
 from huggingface_hub import list_repo_files
 from datasets import load_dataset
+
+
+def select_indices_by_split(
+    total: int,
+    *,
+    split: str,
+    dev_indices: list[int] | None,
+) -> list[int]:
+    """
+    Select instance indices according to split semantics (mirrors CO-Bench).
+
+    - split="all": all indices [0..total-1]
+    - split="dev": indices in dev_indices (if provided), else all
+    - split="test": indices not in dev_indices (if provided), else all
+    
+    Note: If dev_indices is an empty list [], it is treated as [0] (CO-Bench semantics).
+    """
+    if total <= 0:
+        return []
+
+    split = (split or "all").lower()
+    if split not in ("all", "dev", "test"):
+        raise ValueError(f"Unknown split='{split}'. Expected one of: all/dev/test.")
+
+    all_idx = list(range(total))
+    if split == "all":
+        return all_idx
+
+    if dev_indices is None:
+        # Same as CO-Bench: if no dev mapping exists, dev/test collapse to all.
+        return all_idx
+
+    # CO-Bench semantics: empty list [] is treated as [0]
+    if len(dev_indices) == 0:
+        dev_indices = [0]
+
+    dev_set = {i for i in dev_indices if 0 <= i < total}
+    if split == "dev":
+        return sorted(dev_set)
+    # split == "test"
+    return [i for i in all_idx if i not in dev_set]
 
 
 def load_subdir_as_text(repo_id: str, subdir: str, *, skip_ext: tuple[str, ...] = (".py",), streaming: bool = False):
