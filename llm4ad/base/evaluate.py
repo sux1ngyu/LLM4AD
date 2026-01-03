@@ -22,6 +22,7 @@ from __future__ import annotations
 import multiprocessing
 import sys
 import time
+import traceback
 from abc import ABC, abstractmethod
 from typing import Any, Literal
 
@@ -244,8 +245,17 @@ class SecureEvaluator:
             res = self._evaluator.evaluate_program(program_str, program_callable, **kwargs)
             result_queue.put(res)
         except Exception as e:
+            # Important: This runs in a separate process (safe_evaluate=True).
+            # If evaluation fails, we want a full traceback to diagnose why the score becomes None.
             if self._debug_mode:
-                print(e)
+                try:
+                    sys.stderr.write("DEBUG: exception raised during safe evaluation:\n")
+                    sys.stderr.write(traceback.format_exc())
+                    sys.stderr.write("\n")
+                    sys.stderr.flush()
+                except Exception:
+                    # Avoid masking the original failure due to logging issues.
+                    pass
             result_queue.put(None)
 
     def _evaluate(self, program_str: str, function_name, **kwargs):

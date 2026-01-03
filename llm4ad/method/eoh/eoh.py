@@ -48,6 +48,7 @@ class EoH:
                  profiler: ProfilerBase = None,
                  max_generations: Optional[int] = 10,
                  max_sample_nums: Optional[int] = 100,
+                 max_api_cost: Optional[float] = None,
                  pop_size: Optional[int] = 5,
                  selection_num=2,
                  use_e2_operator: bool = True,
@@ -69,6 +70,7 @@ class EoH:
                               pass 'None' to disable this termination condition.
             max_sample_nums : terminate after evaluating max_sample_nums functions (no matter the function is valid or not) or reach 'max_generations',
                               pass 'None' to disable this termination condition.
+            max_api_cost    : terminate if cumulative API cost exceeds this threshold (in USD). None means no limit.
             pop_size        : population size, if set to 'None', EoH will automatically adjust this parameter.
             selection_num   : number of selected individuals while crossover.
             use_e2_operator : if use e2 operator.
@@ -87,6 +89,7 @@ class EoH:
         self._task_description_str = evaluation.task_description
         self._max_generations = max_generations
         self._max_sample_nums = max_sample_nums
+        self._max_api_cost = max_api_cost
         self._pop_size = pop_size
         self._selection_num = selection_num
         self._use_e2_operator = use_e2_operator
@@ -197,6 +200,7 @@ class EoH:
         func.completion_tokens = self._sampler.llm.last_completion_tokens
         func.total_tokens = self._sampler.llm.last_total_tokens
         func.api_cost = self._sampler.llm.last_api_cost
+        func.total_cost = self._sampler.llm.total_api_cost
 
         if self._profiler is not None:
             self._profiler.register_function(func, program=str(program))
@@ -208,15 +212,23 @@ class EoH:
         self._population.register_function(func)
 
     def _continue_loop(self) -> bool:
-        if self._max_generations is None and self._max_sample_nums is None:
-            return True
-        elif self._max_generations is not None and self._max_sample_nums is None:
-            return self._population.generation < self._max_generations
-        elif self._max_generations is None and self._max_sample_nums is not None:
-            return self._tot_sample_nums < self._max_sample_nums
-        else:
-            return (self._population.generation < self._max_generations
-                    and self._tot_sample_nums < self._max_sample_nums)
+        """Check if the search should continue based on generation, sample count, and API cost budget."""
+        # Check generation limit
+        if self._max_generations is not None and self._population.generation >= self._max_generations:
+            print(f'Generation limit reached: {self._population.generation} >= {self._max_generations}')
+            return False
+        
+        # Check sample count limit
+        if self._max_sample_nums is not None and self._tot_sample_nums >= self._max_sample_nums:
+            print(f'Sample count limit reached: {self._tot_sample_nums} >= {self._max_sample_nums}')
+            return False
+        
+        # Check API cost budget
+        if self._max_api_cost is not None and self._sampler.llm.total_api_cost >= self._max_api_cost:
+            print(f'API cost budget reached: ${self._sampler.llm.total_api_cost:.4f} >= ${self._max_api_cost:.4f}')
+            return False
+        
+        return True
 
     def _iteratively_use_eoh_operator(self):
         while self._continue_loop():

@@ -67,8 +67,25 @@ class LLM:
 
     def draw_samples(self, prompts: List[str | Any], *args, **kwargs) -> List[str]:
         """Returns multiple predicted continuations of `prompt`.
+        
+        Saves token information for each sample to avoid being overwritten.
         """
-        return [self.draw_sample(p, *args, **kwargs) for p in prompts]
+        samples = []
+        self._samples_token_info = []  # Store token info for each sample
+        
+        for p in prompts:
+            sample = self.draw_sample(p, *args, **kwargs)
+            samples.append(sample)
+            # Immediately save token info after each call
+            self._samples_token_info.append({
+                'prompt_tokens': self.last_prompt_tokens,
+                'completion_tokens': self.last_completion_tokens,
+                'total_tokens': self.last_total_tokens,
+                'api_cost': self.last_api_cost,
+                'total_cost': self.total_api_cost,  # Save cumulative cost at this point
+            })
+        
+        return samples
 
     def close(self):
         """Defines how to close the connection to API,
@@ -156,6 +173,20 @@ class SampleTrimmer:
         """
         is_code_complete = cls._check_indent_if_code_completion(generated_code)
         if is_code_complete:
+            # Special case: Check if this is a partial function definition (missing 'def' line)
+            generated_code_stripped = generated_code.strip()
+            lines = generated_code_stripped.splitlines()
+            if lines and lines[0].strip() and not lines[0].strip().startswith('def'):
+                first_few_lines = '\n'.join(lines[:min(10, len(lines))])
+                if (') ->' in first_few_lines or '):' in first_few_lines) and not first_few_lines.startswith('def'):
+                    for i, line in enumerate(lines):
+                        stripped = line.strip()
+                        if ')' in stripped and stripped.endswith(':') and not stripped.startswith('#'):
+                            body_lines = lines[i+1:]
+                            result = '\n'.join(body_lines)
+                            if result.strip(): 
+                                return result + '\n'
+                            break
             return generated_code
         generated_code = cls.trim_preface_of_function(generated_code)
         return generated_code
@@ -178,6 +209,9 @@ class SampleTrimmer:
         to a Function instance. If the convert fails, return None.
         """
         try:
+            # First apply auto_trim to handle code completion format
+            generated_code = cls.auto_trim(generated_code)
+            # Then extract the function body
             generated_code = cls.trim_function_body(generated_code)
             # convert program to Program instance
             if isinstance(template_program, str):

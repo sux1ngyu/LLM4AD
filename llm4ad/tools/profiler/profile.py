@@ -138,6 +138,7 @@ class ProfilerBase:
             'completion_tokens': function.completion_tokens,
             'total_tokens': function.total_tokens,
             'api_cost': function.api_cost,
+            'total_cost': function.total_cost,
         }
 
         if record_type == 'history':
@@ -197,6 +198,7 @@ class ProfilerBase:
                 print(f'------------------------------------------------------')
                 print(f'Tokens (prompt/completion/total): {function.prompt_tokens}/{function.completion_tokens}/{function.total_tokens}')
                 print(f'API Cost     : ${function.api_cost:.6f}')
+                print(f'Total Cost   : ${function.total_cost:.6f}')
                 print(f'------------------------------------------------------')
                 print(f'Current best score: {self._cur_best_program_score}')
                 print(f'======================================================\n')
@@ -204,22 +206,22 @@ class ProfilerBase:
                 if score is None:
                     if self._num_objs < 2:
                         print(
-                            f'Sample{self._num_samples}: Score=None    Cur_Best_Score={self._cur_best_program_score: .3f}  Tokens={function.total_tokens}  Cost=${function.api_cost:.6f}')
+                            f'Sample{self._num_samples}: Score=None    Cur_Best_Score={self._cur_best_program_score: .3f}  Tokens={function.total_tokens}  Cost=${function.api_cost:.6f}  TotalCost=${function.total_cost:.6f}')
                     else:
                         # Format the list of best scores dynamically
                         best_scores_str = ", ".join([f"{s: .3f}" for s in self._cur_best_program_score])
                         print(
-                            f'Sample{self._num_samples}: Score=None    Cur_Best_Score=[{best_scores_str}]  Tokens={function.total_tokens}  Cost=${function.api_cost:.6f}')
+                            f'Sample{self._num_samples}: Score=None    Cur_Best_Score=[{best_scores_str}]  Tokens={function.total_tokens}  Cost=${function.api_cost:.6f}  TotalCost=${function.total_cost:.6f}')
                 else:
                     if self._num_objs < 2:
                         print(
-                            f'Sample{self._num_samples}: Score={score: .3f}     Cur_Best_Score={self._cur_best_program_score: .3f}  Tokens={function.total_tokens}  Cost=${function.api_cost:.6f}')
+                            f'Sample{self._num_samples}: Score={score: .3f}     Cur_Best_Score={self._cur_best_program_score: .3f}  Tokens={function.total_tokens}  Cost=${function.api_cost:.6f}  TotalCost=${function.total_cost:.6f}')
                     else:
                         # Format both current scores and best scores dynamically
                         scores_str = ", ".join([f"{s: .3f}" for s in score])
                         best_scores_str = ", ".join([f"{s: .3f}" for s in self._cur_best_program_score])
                         print(
-                            f'Sample{self._num_samples}: Score=[{scores_str}]     Cur_Best_Score=[{best_scores_str}]  Tokens={function.total_tokens}  Cost=${function.api_cost:.6f}')
+                            f'Sample{self._num_samples}: Score=[{scores_str}]     Cur_Best_Score=[{best_scores_str}]  Tokens={function.total_tokens}  Cost=${function.api_cost:.6f}  TotalCost=${function.total_cost:.6f}')
 
         # update statistics about function
         if score is not None:
@@ -237,6 +239,7 @@ class ProfilerBase:
         self._samples_json_dir = os.path.join(self._log_dir, 'samples')
         os.makedirs(self._log_dir, exist_ok=True)
         os.makedirs(self._samples_json_dir, exist_ok=True)
+        os.environ["LLM4AD_RUN_LOG_DIR"] = self._log_dir
 
         file_name = self._log_dir + '/run_log.txt'
         file_mode = 'a' if os.path.isfile(file_name) else 'w'

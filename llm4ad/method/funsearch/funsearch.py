@@ -47,6 +47,7 @@ class FunSearch:
                  num_evaluators: int = 4,
                  samples_per_prompt: int = 4,
                  max_sample_nums: Optional[int] = 20,
+                 max_api_cost: Optional[float] = None,
                  *,
                  resume_mode: bool = False,
                  debug_mode: bool = False,
@@ -58,6 +59,7 @@ class FunSearch:
             evaluation      : an instance of 'llm4ad.base.Evaluator', which defines the way to calculate the score of a generated function.
             profiler        : an instance of 'llm4ad.method.funsearch.FunSearchProfiler'. If you do not want to use it, you can pass a 'None'.
             max_sample_nums : terminate after evaluating max_sample_nums functions (no matter the function is valid or not).
+            max_api_cost    : terminate if cumulative API cost exceeds this threshold (in USD). None means no limit.
             num_samplers    : number of independent Samplers in the experiment.
             num_evaluators  : number of independent program Evaluators in the experiment.
             resume_mode     : in resume_mode, funsearch will not evaluate the template_program, and will skip the init process. TODO: More detailed usage.
@@ -72,6 +74,7 @@ class FunSearch:
         # arguments and keywords
         self._template_program_str = evaluation.template_program
         self._max_sample_nums = max_sample_nums
+        self._max_api_cost = max_api_cost
         self._num_samplers = num_samplers
         self._num_evaluators = num_evaluators
         self._samples_per_prompt = samples_per_prompt
@@ -118,8 +121,20 @@ class FunSearch:
         if profiler is not None:
             self._profiler.record_parameters(llm, evaluation, self)  # ZL: necessary
 
+    def _continue_loop(self) -> bool:
+        """Check if the search should continue based on sample count and API cost budget."""
+        # Check sample count limit
+        if self._max_sample_nums is not None and self._tot_sample_nums >= self._max_sample_nums:
+            print(f'Sample count limit reached: {self._tot_sample_nums} >= {self._max_sample_nums}')
+            return False
+        # Check API cost budget
+        if self._max_api_cost is not None and self._sampler.llm.total_api_cost >= self._max_api_cost:
+            print(f'API cost budget reached: ${self._sampler.llm.total_api_cost:.4f} >= ${self._max_api_cost:.4f}')
+            return False
+        return True
+
     def _sample_evaluate_register(self):
-        while (self._max_sample_nums is None) or (self._tot_sample_nums < self._max_sample_nums):
+        while self._continue_loop():
             try:
                 # get prompt
                 prompt = self._database.get_prompt()
@@ -133,11 +148,25 @@ class FunSearch:
 
                 # convert samples to program instances
                 programs_to_be_eval = []
-                for func in sampled_funcs:
+                # Store token info for each successfully converted program
+                token_info_list = []
+                for idx, func in enumerate(sampled_funcs):
                     program = SampleTrimmer.sample_to_program(func, self._template_program)
                     # if sample to program success
                     if program is not None:
                         programs_to_be_eval.append(program)
+                        # Get token info for this specific sample
+                        if hasattr(self._sampler.llm, '_samples_token_info') and idx < len(self._sampler.llm._samples_token_info):
+                            token_info_list.append(self._sampler.llm._samples_token_info[idx])
+                        else:
+                            # Fallback: use last values
+                            token_info_list.append({
+                                'prompt_tokens': self._sampler.llm.last_prompt_tokens,
+                                'completion_tokens': self._sampler.llm.last_completion_tokens,
+                                'total_tokens': self._sampler.llm.last_total_tokens,
+                                'api_cost': self._sampler.llm.last_api_cost,
+                                'total_cost': self._sampler.llm.total_api_cost,
+                            })
 
                 # submit tasks to the thread pool and evaluate
                 futures = []
@@ -150,7 +179,7 @@ class FunSearch:
 
                 # register to program database and profiler
                 island_id = prompt.island_id
-                for program, score, eval_time in zip(programs_to_be_eval, scores, times):
+                for idx, (program, score, eval_time) in enumerate(zip(programs_to_be_eval, scores, times)):
                     # update
                     self._tot_sample_nums += 1
                     # convert to Function instance
@@ -170,6 +199,13 @@ class FunSearch:
                         function.score = score
                         function.sample_time = avg_time_for_each_sample
                         function.evaluate_time = eval_time
+                        # Get token info for this specific sample
+                        token_info = token_info_list[idx] if idx < len(token_info_list) else {}
+                        function.prompt_tokens = token_info.get('prompt_tokens', 0)
+                        function.completion_tokens = token_info.get('completion_tokens', 0)
+                        function.total_tokens = token_info.get('total_tokens', 0)
+                        function.api_cost = token_info.get('api_cost', 0.0)
+                        function.total_cost = token_info.get('total_cost', 0.0)  # Use saved cumulative cost
                         self._profiler.register_function(function, program=str(program))
                         if isinstance(self._profiler, FunSearchProfiler):
                             self._profiler.register_program_db(self._database)
@@ -199,6 +235,12 @@ class FunSearch:
             if self._profiler:
                 self._function_to_evolve.score = score
                 self._function_to_evolve.evaluate_time = eval_time
+                # Initialize token and cost fields for template function (not generated by LLM)
+                self._function_to_evolve.prompt_tokens = 0
+                self._function_to_evolve.completion_tokens = 0
+                self._function_to_evolve.total_tokens = 0
+                self._function_to_evolve.api_cost = 0.0
+                self._function_to_evolve.total_cost = 0.0
                 self._profiler.register_function(self._function_to_evolve, program=str(self._template_program))
 
         # start sampling using multiple threads
