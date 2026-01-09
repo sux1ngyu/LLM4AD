@@ -82,6 +82,11 @@ class ReEvoProfiler(ProfilerBase):
             'function': str(function),
             'score': function.score,
             'program': program,
+            'prompt_tokens': function.prompt_tokens,
+            'completion_tokens': function.completion_tokens,
+            'total_tokens': function.total_tokens,
+            'api_cost': function.api_cost,
+            'total_cost': function.total_cost,
         }
 
         if record_type == 'history':

@@ -167,6 +167,12 @@ class FunSearch:
                                 'api_cost': self._sampler.llm.last_api_cost,
                                 'total_cost': self._sampler.llm.total_api_cost,
                             })
+                    else:
+                        if hasattr(self._sampler.llm, '_samples_token_info') and idx < len(self._sampler.llm._samples_token_info):
+                            failed_cost = self._sampler.llm._samples_token_info[idx].get('api_cost', 0.0)
+                        else:
+                            failed_cost = self._sampler.llm.last_api_cost
+                        self._sampler.llm.record_failed_cost('funsearch_program_convert_failed', failed_cost)
 
                 # submit tasks to the thread pool and evaluate
                 futures = []
@@ -186,6 +192,9 @@ class FunSearch:
                     function = TextFunctionProgramConverter.program_to_function(program)
                     # check if the function has converted to Function instance successfully
                     if function is None:
+                        token_info = token_info_list[idx] if idx < len(token_info_list) else {}
+                        failed_cost = token_info.get('api_cost', 0.0)
+                        self._sampler.llm.record_failed_cost('funsearch_function_convert_failed', failed_cost)
                         continue
                     # register to program database
                     if score is not None:

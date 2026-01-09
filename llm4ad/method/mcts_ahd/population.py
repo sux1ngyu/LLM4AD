@@ -51,13 +51,15 @@ class Population:
 
         pop = self._population + self._next_gen_pop
 
-        # keep unique algorithms
+        # keep unique algorithms based on code (str), not score
+        # Different algorithms can have the same score, so we should deduplicate by code
         unique_pop = []
-        unique_objectives = []
+        unique_codes = []
         for individual in pop:
-            if individual.score not in unique_objectives:
+            code_str = str(individual)
+            if code_str not in unique_codes:
                 unique_pop.append(individual)
-                unique_objectives.append(individual.score)
+                unique_codes.append(code_str)
 
         pop = sorted(unique_pop, key=lambda f: f.score, reverse=True)  # better sort
         self._population = pop[:pop_size]
@@ -70,13 +72,15 @@ class Population:
 
         pop = self._population + self._next_gen_pop
 
-        # keep unique algorithms
+        # keep unique algorithms based on code (str), not score
+        # Different algorithms can have the same score, so we should deduplicate by code
         unique_pop = []
-        unique_objectives = []
+        unique_codes = []
         for individual in pop:
-            if individual.score not in unique_objectives:
+            code_str = str(individual)
+            if code_str not in unique_codes:
                 unique_pop.append(individual)
-                unique_objectives.append(individual.score)
+                unique_codes.append(code_str)
 
         pop = sorted(unique_pop, key=lambda f: f.score, reverse=False)  # worst sort
         self._population = pop[:pop_size]

@@ -12,6 +12,8 @@ class EoHSampler:
     def __init__(self, llm: LLM, template_program: str | Program):
         self.llm = llm
         self._template_program = template_program
+        self._last_response = None
+        self._last_trimmed_code = None
 
     def get_thought_and_function(self, prompt: str) -> Tuple[str, Function]:
         response = self.llm.draw_sample(prompt)
@@ -19,6 +21,9 @@ class EoHSampler:
         code = SampleTrimmer.trim_preface_of_function(response)
 
         function = SampleTrimmer.sample_to_function(code, self._template_program)
+        # Store original response for debugging
+        self._last_response = response
+        self._last_trimmed_code = code
         return thought, function
 
     @classmethod

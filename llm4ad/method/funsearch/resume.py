@@ -43,6 +43,7 @@ def _get_all_samples_and_scores(path, get_algorithm=False):
     all_score = []
     all_algorithm = []
     max_o = 0  # the max sample orders
+    last_total_cost = 0.0  # Track the last total_cost to restore LLM's total_api_cost
 
     for file in sorted_files:
         file_path = os.path.join(file_dir, file)
@@ -53,12 +54,17 @@ def _get_all_samples_and_scores(path, get_algorithm=False):
                 acc = sample['score'] if sample['score'] else float('-inf')
                 all_func.append(func)
                 all_score.append(acc)
-                all_algorithm.append(sample['algorithm'])
+                # FunSearch doesn't have 'algorithm' field, use None as default
+                algo = sample.get('algorithm', None)
+                all_algorithm.append(algo)
                 max_o = sample['sample_order']
+                # Track the last total_cost value
+                if 'total_cost' in sample and sample['total_cost'] is not None:
+                    last_total_cost = max(last_total_cost, sample['total_cost'])
 
     if get_algorithm:
-        return all_func, all_score, max_o, all_algorithm
-    return all_func, all_score, max_o
+        return all_func, all_score, max_o, all_algorithm, last_total_cost
+    return all_func, all_score, max_o, last_total_cost
 
 
 def _resume_db(log_path: str, db_config, template, func_to_evol) -> ProgramsDatabase:
@@ -97,29 +103,35 @@ def _resume_text2func(f, s, template_func: Function):
 
 def _resume_pf(log_path: str, pf: FunSearchProfiler, template_func: Function):
     _, db_max_order = _get_latest_db_json(log_path)
-    funcs, scores, sample_max_order = _get_all_samples_and_scores(log_path)
+    funcs, scores, sample_max_order, last_total_cost = _get_all_samples_and_scores(log_path)
     print(f'RESUME FunSearch: Sample order: {sample_max_order}.', flush=True)
-    pf.__class__._prog_db_order = db_max_order
+    pf._prog_db_order = db_max_order  # Fix: use instance variable instead of class variable
     # pf.__class__._num_samples = sample_max_order
     for i in tqdm(range(len(funcs)), desc='Resume FunSearch Profiler'):  # noqa
         f, s = funcs[i], scores[i]  # noqa
         f = _resume_text2func(f, s, template_func)
         pf.register_function(f, resume_mode=True)
+    return last_total_cost
 
 
-def resume_funsearch(fs: FunSearch):
+def resume_funsearch(fs: FunSearch, path: str = None):
     fs._resume_mode = True
     pf = fs._profiler  # noqa
-    log_path = pf._log_dir  # noqa
+    # Use provided path or fall back to profiler's log_dir
+    log_path = path if path is not None else pf._log_dir  # noqa
     # resume program database
     template = tfpc.text_to_program(fs._template_program_str)  # noqa
     template_func = fs._function_to_evolve
-    config = fs._config.programs_database  # noqa
+    config = fs.db_config  # noqa: FunSearch stores config as db_config, not _config.programs_database
     func_to_evol = fs._function_to_evolve_name  # noqa
     db = _resume_db(log_path, config, template, func_to_evol)
     fs._database = db
-    # resume profiler
-    _resume_pf(log_path, pf, template_func)
+    # resume profiler and get last total_cost
+    last_total_cost = _resume_pf(log_path, pf, template_func)
     # resume funsearch
-    _, _, sample_max_order = _get_all_samples_and_scores(log_path)
+    _, _, sample_max_order, _ = _get_all_samples_and_scores(log_path)
     fs._tot_sample_nums = sample_max_order
+    # Restore LLM's total_api_cost from the last sample's total_cost
+    if last_total_cost > 0:
+        fs._sampler.llm.total_api_cost = last_total_cost
+        print(f'RESUME FunSearch: Restored LLM total_api_cost to ${last_total_cost:.6f}', flush=True)

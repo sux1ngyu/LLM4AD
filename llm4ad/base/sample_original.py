@@ -37,20 +37,6 @@ class LLM:
         self.do_auto_trim = do_auto_trim
         self.debug_mode = debug_mode
 
-        # Token usage tracking
-        self.last_prompt_tokens = 0
-        self.last_completion_tokens = 0
-        self.last_total_tokens = 0
-        self.last_api_cost = 0.0
-
-        self.total_prompt_tokens = 0
-        self.total_completion_tokens = 0
-        self.total_tokens = 0
-        self.total_api_cost = 0.0
-        
-        self._failed_costs = {}
-        self._failed_counts = {}
-
     @abstractmethod
     def draw_sample(self, prompt: str | Any, *args, **kwargs) -> str:
         """Returns a predicted continuation of `prompt`.
@@ -70,44 +56,8 @@ class LLM:
 
     def draw_samples(self, prompts: List[str | Any], *args, **kwargs) -> List[str]:
         """Returns multiple predicted continuations of `prompt`.
-        
-        Saves token information for each sample to avoid being overwritten.
         """
-        samples = []
-        self._samples_token_info = []  # Store token info for each sample
-        
-        for p in prompts:
-            sample = self.draw_sample(p, *args, **kwargs)
-            samples.append(sample)
-            # Immediately save token info after each call
-            self._samples_token_info.append({
-                'prompt_tokens': self.last_prompt_tokens,
-                'completion_tokens': self.last_completion_tokens,
-                'total_tokens': self.last_total_tokens,
-                'api_cost': self.last_api_cost,
-                'total_cost': self.total_api_cost,  # Save cumulative cost at this point
-            })
-        
-        return samples
-
-    def record_failed_cost(self, reason: str, cost: float):
-        if reason not in self._failed_costs:
-            self._failed_costs[reason] = 0.0
-            self._failed_counts[reason] = 0
-        self._failed_costs[reason] += cost
-        self._failed_counts[reason] += 1
-    
-    def get_failed_cost_summary(self):
-        return dict(self._failed_costs)
-    
-    def get_failed_count_summary(self):
-        return dict(self._failed_counts)
-    
-    def get_total_failed_cost(self):
-        return sum(self._failed_costs.values())
-    
-    def get_total_failed_count(self):
-        return sum(self._failed_counts.values())
+        return [self.draw_sample(p, *args, **kwargs) for p in prompts]
 
     def close(self):
         """Defines how to close the connection to API,
@@ -173,28 +123,15 @@ class SampleTrimmer:
         This function aims to ...
         --------------------------------------------------------------------------
         """
-        import re
-        generated_code = re.sub(r'^```[Pp]ython\s*\n', '', generated_code, flags=re.MULTILINE)
-        generated_code = re.sub(r'^```\s*\n', '', generated_code, flags=re.MULTILINE)
-        generated_code = re.sub(r'\n```\s*$', '', generated_code)
-        
         lines = generated_code.splitlines()
         func_body_lineno = 0
         find_def_declaration = False
-        
         for lineno, line in enumerate(lines):
-            if 'def solve(' in line:
+            # find the first 'def' statement in the given code
+            if line[:3] == 'def':
                 func_body_lineno = lineno
                 find_def_declaration = True
                 break
-        
-        if not find_def_declaration:
-            for lineno, line in enumerate(lines):
-                if line[:3] == 'def':
-                    func_body_lineno = lineno
-                    find_def_declaration = True
-                    break
-        
         if find_def_declaration:
             code = ''
             for line in lines[func_body_lineno + 1:]:
@@ -208,24 +145,6 @@ class SampleTrimmer:
         """
         is_code_complete = cls._check_indent_if_code_completion(generated_code)
         if is_code_complete:
-            generated_code_stripped = generated_code.strip()
-            lines = generated_code_stripped.splitlines()
-            if lines and lines[0].strip() and not lines[0].strip().startswith('def'):
-                first_few_lines = '\n'.join(lines[:min(10, len(lines))])
-                if (') ->' in first_few_lines or '):' in first_few_lines) and not first_few_lines.startswith('def'):
-                    python_keywords = ('def ', 'for ', 'if ', 'while ', 'with ', 'class ', 
-                                      'try:', 'except', 'elif ', 'else:', 'async ', 'match ', 'case ')
-                    for i, line in enumerate(lines):
-                        stripped = line.strip()
-                        if ')' in stripped and stripped.endswith(':') and not stripped.startswith('#'):
-                            is_keyword_line = any(stripped.startswith(kw) for kw in python_keywords)
-                            is_symbol_only = all(c in ')(:,->[] \t' for c in stripped)
-                            if not is_keyword_line and not is_symbol_only:
-                                body_lines = lines[i+1:]
-                                result = '\n'.join(body_lines)
-                                if result.strip(): 
-                                    return result + '\n'
-                                break
             return generated_code
         generated_code = cls.trim_preface_of_function(generated_code)
         return generated_code
@@ -248,9 +167,6 @@ class SampleTrimmer:
         to a Function instance. If the convert fails, return None.
         """
         try:
-            # First apply auto_trim to handle code completion format
-            generated_code = cls.auto_trim(generated_code)
-            # Then extract the function body
             generated_code = cls.trim_function_body(generated_code)
             # convert program to Program instance
             if isinstance(template_program, str):

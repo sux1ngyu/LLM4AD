@@ -81,7 +81,13 @@ class MCTS:
 
     def uct(self, node: MCTSNode, eval_remain):
         self.exploration_constant = (self.exploration_constant_0) * eval_remain
-        return (node.Q - self.q_min) / (self.q_max - self.q_min) + self.exploration_constant * math.sqrt(
+        # Avoid division by zero when all nodes have the same Q value
+        if abs(self.q_max - self.q_min) < self.epsilon:
+            # All nodes have the same Q value, use only exploration term
+            normalized_reward = 0.5
+        else:
+            normalized_reward = (node.Q - self.q_min) / (self.q_max - self.q_min)
+        return normalized_reward + self.exploration_constant * math.sqrt(
             math.log(node.parent.visits + 1) / node.visits
         )
 

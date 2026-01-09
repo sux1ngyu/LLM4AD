@@ -43,6 +43,7 @@ def _get_all_samples_and_scores(path, get_algorithm=True):
     all_score = []
     all_algorithm = []
     max_o = 0  # the max sample orders
+    last_total_cost = 0.0  # Track the last total_cost to restore LLM's total_api_cost
 
     for file in sorted_files:
         file_path = os.path.join(file_dir, file)
@@ -55,10 +56,13 @@ def _get_all_samples_and_scores(path, get_algorithm=True):
                 all_score.append(acc)
                 all_algorithm.append(sample['algorithm'])
                 max_o = sample['sample_order']
+                # Track the last total_cost value
+                if 'total_cost' in sample and sample['total_cost'] is not None:
+                    last_total_cost = max(last_total_cost, sample['total_cost'])
 
     if get_algorithm:
-        return all_func, all_score, max_o, all_algorithm
-    return all_func, all_score, max_o
+        return all_func, all_score, max_o, all_algorithm, last_total_cost
+    return all_func, all_score, max_o, last_total_cost
 
 
 def _resume_pop(log_path: str, pop_size) -> Population:
@@ -93,15 +97,16 @@ def _resume_text2func(f, s, template_func: Function):
 
 def _resume_pf(log_path: str, pf: ReEvoProfiler, template_func):
     _, db_max_order = _get_latest_pop_json(log_path)
-    funcs, scores, sample_max_order, algorithms = _get_all_samples_and_scores(log_path)
+    funcs, scores, sample_max_order, algorithms, last_total_cost = _get_all_samples_and_scores(log_path)
     print(f'RESUME ReEvo: Sample order: {sample_max_order}.', flush=True)
-    pf.__class__._prog_db_order = db_max_order
+    # Note: ReEvoProfiler doesn't have _prog_db_order, so we don't need to set it
     # pf.__class__._num_samples = sample_max_order
     for i in tqdm(range(len(funcs)), desc='Resume ReEvo Profiler'):  # noqa
         f, s, algo = funcs[i], scores[i], algorithms[i]
         f = _resume_text2func(f, s, template_func)
         f.algorithm = algo
         pf.register_function(f, resume_mode=True)
+    return last_total_cost
 
 
 def resume_reevo(reevo: ReEvo, path):
@@ -111,9 +116,13 @@ def resume_reevo(reevo: ReEvo, path):
     # resume program database
     pop = _resume_pop(log_path, reevo._pop_size)
     reevo._population = pop
-    # resume profiler
+    # resume profiler and get last total_cost
     template_func = reevo._function_to_evolve
-    _resume_pf(log_path, pf, template_func)
+    last_total_cost = _resume_pf(log_path, pf, template_func)
     # resume reevo
-    _, _, sample_max_order, _ = _get_all_samples_and_scores(log_path)
+    _, _, sample_max_order, _, _ = _get_all_samples_and_scores(log_path)
     reevo._tot_sample_nums = sample_max_order
+    # Restore LLM's total_api_cost from the last sample's total_cost
+    if last_total_cost > 0:
+        reevo._sampler.llm.total_api_cost = last_total_cost
+        print(f'RESUME ReEvo: Restored LLM total_api_cost to ${last_total_cost:.6f}', flush=True)

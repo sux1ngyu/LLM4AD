@@ -1,3 +1,3 @@
 from .config import ProgramsDatabaseConfig
 from .funsearch import FunSearch
-from .profiler import FunSearchTensorboardProfiler, FunSearchWandbProfiler
+from .profiler import FunSearchTensorboardProfiler, FunSearchWandbProfiler, FunSearchProfiler

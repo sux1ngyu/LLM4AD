@@ -49,6 +49,7 @@ class MCTS_AHD:
                  evaluation: Evaluation,
                  profiler: ProfilerBase = None,
                  max_sample_nums: Optional[int] = 100,
+                 max_api_cost: Optional[float] = None,
                  init_size: Optional[float] = 4,
                  pop_size: Optional[int] = 10,
                  selection_num: int = 2,
@@ -69,6 +70,7 @@ class MCTS_AHD:
                               pass 'None' to disable this termination condition.
             max_sample_nums : terminate after evaluating max_sample_nums functions (no matter the function is valid or not) or reach 'max_generations',
                               pass 'None' to disable this termination condition.
+            max_api_cost    : terminate if cumulative API cost exceeds this threshold (in USD). None means no limit.
             init_size       : population size, if set to 'None', EoH will automatically adjust this parameter.
             pop_size        : population size, if set to 'None', EoH will automatically adjust this parameter.
             selection_num   : number of selected individuals while crossover.
@@ -86,6 +88,7 @@ class MCTS_AHD:
         self._template_program_str = evaluation.template_program
         self._task_description_str = evaluation.task_description
         self._max_sample_nums = max_sample_nums
+        self._max_api_cost = max_api_cost
         self.lambda_0 = lambda_0
         self.alpha = alpha
         self._init_pop_size = init_size
@@ -118,10 +121,13 @@ class MCTS_AHD:
         self._tot_sample_nums = 0
 
         # reset _initial_sample_nums_max
-        self._initial_sample_nums_max = min(
-            self._max_sample_nums,
-            10 * self._init_pop_size
-        )
+        if self._max_sample_nums is not None:
+            self._initial_sample_nums_max = min(
+                self._max_sample_nums,
+                10 * self._init_pop_size
+            )
+        else:
+            self._initial_sample_nums_max = 10 * self._init_pop_size
 
         # multi-thread executor for evaluation
         assert multi_thread_or_process_eval in ['thread', 'process']
@@ -175,10 +181,12 @@ class MCTS_AHD:
         thought, func = self._sampler.get_thought_and_function(self._task_description_str, prompt)
         sample_time = time.time() - sample_start
         if thought is None or func is None:
+            self._sampler.llm.record_failed_cost('mcts_ahd_parse_failed', self._sampler.llm.last_api_cost)
             return False
         # convert to Program instance
         program = TextFunctionProgramConverter.function_to_program(func, self._template_program)
         if program is None:
+            self._sampler.llm.record_failed_cost('mcts_ahd_program_convert_failed', self._sampler.llm.last_api_cost)
             return False
         # evaluate
         score, eval_time = self._evaluation_executor.submit(
@@ -190,6 +198,12 @@ class MCTS_AHD:
         func.evaluate_time = eval_time
         func.algorithm = thought
         func.sample_time = sample_time
+        # Add token usage and cost information
+        func.prompt_tokens = self._sampler.llm.last_prompt_tokens
+        func.completion_tokens = self._sampler.llm.last_completion_tokens
+        func.total_tokens = self._sampler.llm.last_total_tokens
+        func.api_cost = self._sampler.llm.last_api_cost
+        func.total_cost = self._sampler.llm.total_api_cost
         if self._profiler is not None:
             self._profiler.register_function(func, program=str(program))
             if isinstance(self._profiler, MAProfiler):
@@ -205,10 +219,16 @@ class MCTS_AHD:
         return True
 
     def _continue_loop(self) -> bool:
-        if self._max_sample_nums is None:
-            return True
-        else:
-            return self._tot_sample_nums < self._max_sample_nums
+        """Check if the search should continue based on sample count and API cost budget."""
+        # Check sample count limit
+        if self._max_sample_nums is not None and self._tot_sample_nums >= self._max_sample_nums:
+            print(f'Sample count limit reached: {self._tot_sample_nums} >= {self._max_sample_nums}')
+            return False
+        # Check API cost budget
+        if self._max_api_cost is not None and self._sampler.llm.total_api_cost >= self._max_api_cost:
+            print(f'API cost budget reached: ${self._sampler.llm.total_api_cost:.4f} >= ${self._max_api_cost:.4f}')
+            return False
+        return True
 
     def check_duplicate(self, population, code):
         for ind in population:
@@ -254,6 +274,10 @@ class MCTS_AHD:
                     is_valid_func = False
                     i += 1
                     continue
+                # Check continue condition after sampling 
+                if not self._continue_loop():
+                    is_valid_func = False
+                    return node_set
                 is_valid_func = (func.score is not None) and not self.check_duplicate(node_set, str(func))
                 if is_valid_func is False:
                     i += 1
@@ -270,6 +294,10 @@ class MCTS_AHD:
             if func is False:
                 is_valid_func = False
             else:
+                # Check continue condition after sampling 
+                if not self._continue_loop():
+                    is_valid_func = False
+                    return node_set
                 is_valid_func = (func.score is not None)
 
         elif option == 'e2':
@@ -287,6 +315,10 @@ class MCTS_AHD:
                     is_valid_func = False
                     i += 1
                     continue
+                # Check continue condition after sampling 
+                if not self._continue_loop():
+                    is_valid_func = False
+                    return node_set
                 is_valid_func = (func.score is not None) and not self.check_duplicate(node_set, str(func))
                 if is_valid_func is False:
                     i += 1
@@ -304,6 +336,10 @@ class MCTS_AHD:
                     is_valid_func = False
                     i += 1
                     continue
+                # Check continue condition after sampling 
+                if not self._continue_loop():
+                    is_valid_func = False
+                    return node_set
                 is_valid_func = (func.score is not None) and not self.check_duplicate(node_set, str(func))
                 if is_valid_func is False:
                     i += 1
@@ -321,6 +357,10 @@ class MCTS_AHD:
                     is_valid_func = False
                     i += 1
                     continue
+                # Check continue condition after sampling (like eoh.py)
+                if not self._continue_loop():
+                    is_valid_func = False
+                    return node_set
                 is_valid_func = (func.score is not None) and not self.check_duplicate(node_set, str(func))
                 if is_valid_func is False:
                     i += 1
@@ -359,7 +399,7 @@ class MCTS_AHD:
         """Let a thread repeat {sample -> evaluate -> register to population}
         to initialize a population.
         """
-        while len(self._population.population) < self._init_pop_size:
+        while len(self._population.population) < self._init_pop_size and self._continue_loop():
             try:
                 # get a new func using e1
                 prompt = MAPrompt.get_prompt_e1(self._task_description_str, self._population.population,
@@ -380,7 +420,15 @@ class MCTS_AHD:
                 continue
 
     def _init_one_solution(self):
-        while len(self._population.next_gen_pop) == 0:
+        # Initialize token/cost fields for template function if needed
+        if not self._resume_mode and self._profiler is not None:
+            self._function_to_evolve.prompt_tokens = 0
+            self._function_to_evolve.completion_tokens = 0
+            self._function_to_evolve.total_tokens = 0
+            self._function_to_evolve.api_cost = 0.0
+            self._function_to_evolve.total_cost = 0.0
+        
+        while len(self._population.next_gen_pop) == 0 and self._continue_loop():
             try:
                 # get a new func using i1
                 prompt = MAPrompt.get_prompt_i1(self._task_description_str, self._function_to_evolve)
@@ -461,6 +509,11 @@ class MCTS_AHD:
                 op_w = op_weights[i]
                 for j in range(op_w):
                     node_set = self.expand(mcts, node_set, cur_node, op)
+                    if not self._continue_loop():
+                        break
+                # Check after each operator type 
+                if not self._continue_loop():
+                    break
             self._population.survival()
 
         # finish

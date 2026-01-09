@@ -179,10 +179,37 @@ class EoH:
         thought, func = self._sampler.get_thought_and_function(prompt)
         sample_time = time.time() - sample_start
         if thought is None or func is None:
+
+            # # Detailed logging for parse failures
+            # failure_reason = []
+            # if thought is None:
+            #     failure_reason.append("thought is None")
+            # if func is None:
+            #     failure_reason.append("function is None")
+            
+            # reason_str = " and ".join(failure_reason)
+            # print(f"[EoH Parse Failed] {reason_str}")
+            
+            # # Print original response for debugging
+            # if hasattr(self._sampler, '_last_response') and self._sampler._last_response:
+            #     print(f"[EoH Parse Failed] Original response (first 500 chars):")
+            #     print(self._sampler._last_response)
+            #     # if len(self._sampler._last_response) > 500:
+            #     #     print(f"... (truncated, total length: {len(self._sampler._last_response)})")
+            
+            # # Print trimmed code if available
+            # if hasattr(self._sampler, '_last_trimmed_code') and self._sampler._last_trimmed_code:
+            #     print(f"[EoH Parse Failed] Trimmed code (first 300 chars):")
+            #     print(self._sampler._last_trimmed_code)
+            #     # if len(self._sampler._last_trimmed_code) > 300:
+            #     #     print(f"... (truncated, total length: {len(self._sampler._last_trimmed_code)})")
+            
+            self._sampler.llm.record_failed_cost('eoh_parse_failed', self._sampler.llm.last_api_cost)
             return
         # convert to Program instance
         program = TextFunctionProgramConverter.function_to_program(func, self._template_program)
         if program is None:
+            self._sampler.llm.record_failed_cost('eoh_program_convert_failed', self._sampler.llm.last_api_cost)
             return
         # evaluate
         score, eval_time = self._evaluation_executor.submit(

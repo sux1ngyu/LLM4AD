@@ -144,10 +144,12 @@ class ReEvo:
         func = SampleTrimmer.sample_to_function(func, self._template_program)
         sample_time = time.time() - sample_start
         if func is None:
+            self._sampler.llm.record_failed_cost('reevo_function_convert_failed', self._sampler.llm.last_api_cost)
             return
         # convert to Program instance
         program = TextFunctionProgramConverter.function_to_program(func, self._template_program)
         if program is None:
+            self._sampler.llm.record_failed_cost('reevo_program_convert_failed', self._sampler.llm.last_api_cost)
             return
         # evaluate
         score, eval_time = self._evaluation_executor.submit(
@@ -191,6 +193,7 @@ class ReEvo:
                     print(f'--------------------------------------------------------------------\n\n')
 
                 short_term_reflection_prompt = self._sampler.llm.draw_sample(short_term_reflection_prompt)
+                self._sampler.llm.record_failed_cost('reevo_short_reflection', self._sampler.llm.last_api_cost)
                 short_term_reflection_prompts.append(short_term_reflection_prompt)
 
                 if self._debug_mode:
@@ -227,6 +230,7 @@ class ReEvo:
                         print(f'--------------------------------------------------------------------\n\n')
 
                     long_term_reflection_prompt = self._sampler.llm.draw_sample(long_term_reflection_prompt)
+                    self._sampler.llm.record_failed_cost('reevo_long_reflection', self._sampler.llm.last_api_cost)
                     long_term_reflection_prompts.append(long_term_reflection_prompt)
 
                     if self._debug_mode:
