@@ -88,6 +88,7 @@ class EoHProfiler(ProfilerBase):
             'completion_tokens': function.completion_tokens,
             'total_tokens': function.total_tokens,
             'api_cost': function.api_cost,
+            'total_cost': function.total_cost,
         }
 
         if record_type == 'history':

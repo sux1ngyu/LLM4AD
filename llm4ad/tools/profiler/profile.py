@@ -109,7 +109,28 @@ class ProfilerBase:
                 self._register_function_lock.release()
 
     def finish(self):
-        pass
+        if self._parameters is not None:
+            llm = self._parameters[0]
+            failed_summary = llm.get_failed_cost_summary()
+            failed_counts = llm.get_failed_count_summary()
+            total_failed = llm.get_total_failed_cost()
+            total_failed_count = llm.get_total_failed_count()
+            total_cost = llm.total_api_cost
+            
+            self._logger_txt.info('====================================================================')
+            self._logger_txt.info('Cost Summary')
+            self._logger_txt.info('--------------------------------------------------------------------')
+            if failed_summary:
+                for reason, cost in sorted(failed_summary.items(), key=lambda x: x[1], reverse=True):
+                    count = failed_counts.get(reason, 0)
+                    avg_cost = cost / count if count > 0 else 0.0
+                    self._logger_txt.info(f'  - {reason}: ${cost:.6f} (count: {count}, avg: ${avg_cost:.6f})')
+            else:
+                self._logger_txt.info('  - No failed costs recorded')
+            self._logger_txt.info(f'  - Total Failed Cost: ${total_failed:.6f} (count: {total_failed_count})')
+            self._logger_txt.info(f'  - Total API Cost: ${total_cost:.6f}')
+            self._logger_txt.info(f'  - Success Sample Cost (Gap): ${total_cost - total_failed:.6f}')
+            self._logger_txt.info('====================================================================')
 
     def get_logger(self):
         pass
